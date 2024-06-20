@@ -1,71 +1,98 @@
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
-import av
 import cv2
+from cvzone.HandTrackingModule import HandDetector
 import numpy as np
-import mediapipe as mp
 import google.generativeai as genai
 from PIL import Image
+import streamlit as st
 
-# Configuration for Google Generative AI
+st.set_page_config(layout="wide")
+#st.image('me.png')
+
+col1, col2 = st.columns([3, 2])
+with col1:
+    run = st.checkbox('Run', value=True)
+    FRAME_WINDOW = st.image([])
+
+with col2:
+    st.title("Answer")
+    output_text_area = st.subheader("")
+
 genai.configure(api_key="AIzaSyDiyJCpfu8wzNXcVbHhPAqlBZ0hgFpsCKY")
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-class HandDetector:
-    def __init__(self, detection_confidence=0.5, tracking_confidence=0.5):
-        self.hands = mp.solutions.hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=detection_confidence,
-            min_tracking_confidence=tracking_confidence
-        )
+# Initialize the webcam to capture video
+# The '2' indicates the third camera connected to your computer; '0' would usually refer to the built-in camera
+cap = cv2.VideoCapture(0)
+detector = HandDetector(detectionCon=0.8, maxHands=1)
+def getHandInfo(img):
+    hands, img = detector.findHands(img )  # with draw
+    #  hands = detector.findHands(img, draw=False)  # without draw
 
-    def find_hands(self, img):
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(img_rgb)
-        return results
+    if hands:
+        # Hand 1
+        hand1 = hands[0]
+        lmList = hand1["lmList"]  # List of 21 Landmark points
 
-    def draw_hands(self, img, results):
-        mp_drawing = mp.solutions.drawing_utils
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(img, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
-        return img
+        handType = hand1["type"]  # Handtype Left or Right
 
-    def fingers_up(self, results):
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                fingers = []
-                for id in [4, 8, 12, 16, 20]:
-                    if id == 4:
-                        if hand_landmarks.landmark[id].x > hand_landmarks.landmark[id - 1].x:
-                            fingers.append(1)
-                        else:
-                            fingers.append(0)
-                    else:
-                        if hand_landmarks.landmark[id].y < hand_landmarks.landmark[id - 2].y:
-                            fingers.append(1)
-                        else:
-                            fingers.append(0)
-                return fingers
-        return []
+        fingers = detector.fingersUp(hand1)
+        print(fingers)
+        return fingers,lmList
+    else:
+        return None
 
-class VideoProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.hand_detector = HandDetector()
 
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        results = self.hand_detector.find_hands(img)
-        img = self.hand_detector.draw_hands(img, results)
-        fingers = self.hand_detector.fingers_up(results)
-        
-        # Check for specific finger gestures
-        if fingers == [1, 1, 1, 1, 1]:  # All fingers up
-            img = cv2.putText(img, "All Fingers Up", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+def draw(info, prev_pos, canvas):
+    fingers, lmList = info
+    current_pos = None
+    if fingers == [0, 1, 0, 0, 0]:
+        current_pos = lmList[8][0:2]
+        if prev_pos is None: prev_pos = current_pos
+        cv2.line(canvas, current_pos, prev_pos, (255, 0, 255), 10)
+    elif fingers == [1, 0, 0, 0, 0]:
+        canvas = np.zeros_like(img)
 
-st.title("Hand Gesture Recognition")
-webrtc_ctx = webrtc_streamer(key="example", mode=WebRtcMode.SENDRECV, video_processor_factory=VideoProcessor, media_stream_constraints={"video": True, "audio": False})
+    return current_pos, canvas
 
+
+def sendToAI(model, canvas, fingers):
+    if fingers == [1, 1, 1, 1, 0]:
+        pil_image = Image.fromarray(canvas)
+        response = model.generate_content(["guess the shape", pil_image])
+        return response.text
+
+
+prev_pos = None
+canvas = None
+image_combined = None
+output_text = ""
+# Continuously get frames from the webcam
+while True:
+    # Capture each frame from the webcam
+    # 'success' will be True if the frame is successfully captured, 'img' will contain the frame
+    success, img = cap.read()
+    img = cv2.flip(img, 1)
+
+    if canvas is None:
+        canvas = np.zeros_like(img)
+
+    info = getHandInfo(img)
+    if info:
+        fingers, lmList = info
+        prev_pos, canvas = draw(info, prev_pos, canvas)
+        output_text = sendToAI(model, canvas, fingers)
+
+    image_combined = cv2.addWeighted(img, 0.7, canvas, 0.3, 0)
+    FRAME_WINDOW.image(image_combined, channels="BGR")
+
+    if output_text:
+        output_text_area.text(output_text)
+
+    # # Display the image in a window
+    #cv2.imshow("Image", img)
+    #cv2.imshow("Canvas", canvas)
+    #cv2.imshow("image_combined", image_combined)
+
+    # Keep the window open and update it for each frame; wait for 1 millisecond between frames
+    cv2.waitKey(1)
