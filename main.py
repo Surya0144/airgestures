@@ -1,16 +1,16 @@
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+import av
 import cv2
 import numpy as np
 import mediapipe as mp
-from streamlit_webrtc import VideoProcessorBase, webrtc_streamer
-import streamlit as st
-from PIL import Image
 import google.generativeai as genai
+from PIL import Image
 
 # Configuration for Google Generative AI
 genai.configure(api_key="AIzaSyDiyJCpfu8wzNXcVbHhPAqlBZ0hgFpsCKY")
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Hand Detection class using MediaPipe
 class HandDetector:
     def __init__(self, detection_confidence=0.5, tracking_confidence=0.5):
         self.hands = mp.solutions.hands.Hands(
@@ -52,44 +52,20 @@ class HandDetector:
 
 class VideoProcessor(VideoProcessorBase):
     def __init__(self):
-        self.detector = HandDetector()
-        self.canvas = None
-        self.prev_pos = None
+        self.hand_detector = HandDetector()
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        img = cv2.flip(img, 1)
+        results = self.hand_detector.find_hands(img)
+        img = self.hand_detector.draw_hands(img, results)
+        fingers = self.hand_detector.fingers_up(results)
         
-        if self.canvas is None:
-            self.canvas = np.zeros_like(img)
+        # Check for specific finger gestures
+        if fingers == [1, 1, 1, 1, 1]:  # All fingers up
+            img = cv2.putText(img, "All Fingers Up", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-        results = self.detector.find_hands(img)
-        img = self.detector.draw_hands(img, results)
-        fingers = self.detector.fingers_up(results)
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-        # Process the fingers to draw on the canvas
-        if fingers == [0, 1, 0, 0, 0]:
-            current_pos = (int(results.multi_hand_landmarks[0].landmark[8].x * img.shape[1]), int(results.multi_hand_landmarks[0].landmark[8].y * img.shape[0]))
-            if self.prev_pos is None:
-                self.prev_pos = current_pos
-            cv2.line(self.canvas, self.prev_pos, current_pos, (255, 0, 255), 10)
-            self.prev_pos = current_pos
-        elif fingers == [1, 0, 0, 0, 0]:
-            self.canvas = np.zeros_like(img)
+st.title("Hand Gesture Recognition")
+webrtc_ctx = webrtc_streamer(key="example", mode=WebRtcMode.SENDRECV, video_processor_factory=VideoProcessor, media_stream_constraints={"video": True, "audio": False})
 
-        img = cv2.addWeighted(img, 0.7, self.canvas, 0.3, 0)
-
-        # Generate AI response if needed
-        if fingers == [1, 1, 1, 1, 0]:
-            pil_image = Image.fromarray(self.canvas)
-            response = model.generate_content(["Solve this math problem", pil_image])
-            st.write(response.text)
-
-        return img
-
-st.title("Webcam Hand Tracking and AI Interaction")
-st.write("This application uses your webcam to detect and track hands in real-time using MediaPipe and OpenCV, and interacts with Google Generative AI.")
-
-webrtc_streamer(key="unique_key", video_processor_factory=VideoProcessor)
-
-st.write("Note: Ensure you allow the browser to access your webcam.")
