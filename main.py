@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import mediapipe as mp
-from streamlit_webrtc import VideoTransformerBase, webrtc_streamer
+from streamlit_webrtc import VideoProcessorBase, webrtc_streamer
 import streamlit as st
 from PIL import Image
 import google.generativeai as genai
@@ -50,12 +50,13 @@ class HandDetector:
                 return fingers
         return []
 
-class VideoTransformer(VideoTransformerBase):
+class VideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.detector = HandDetector()
         self.canvas = None
+        self.prev_pos = None
 
-    def transform(self, frame):
+    def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         img = cv2.flip(img, 1)
         
@@ -68,7 +69,7 @@ class VideoTransformer(VideoTransformerBase):
 
         # Process the fingers to draw on the canvas
         if fingers == [0, 1, 0, 0, 0]:
-            current_pos = (int(hand_landmarks.landmark[8].x * img.shape[1]), int(hand_landmarks.landmark[8].y * img.shape[0]))
+            current_pos = (int(results.multi_hand_landmarks[0].landmark[8].x * img.shape[1]), int(results.multi_hand_landmarks[0].landmark[8].y * img.shape[0]))
             if self.prev_pos is None:
                 self.prev_pos = current_pos
             cv2.line(self.canvas, self.prev_pos, current_pos, (255, 0, 255), 10)
@@ -89,6 +90,6 @@ class VideoTransformer(VideoTransformerBase):
 st.title("Webcam Hand Tracking and AI Interaction")
 st.write("This application uses your webcam to detect and track hands in real-time using MediaPipe and OpenCV, and interacts with Google Generative AI.")
 
-webrtc_streamer(key="unique_key",  video_processor_factory=VideoProcessor)
+webrtc_streamer(key="unique_key", video_processor_factory=VideoProcessor)
 
 st.write("Note: Ensure you allow the browser to access your webcam.")
