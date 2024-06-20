@@ -89,6 +89,6 @@ class VideoTransformer(VideoTransformerBase):
 st.title("Webcam Hand Tracking and AI Interaction")
 st.write("This application uses your webcam to detect and track hands in real-time using MediaPipe and OpenCV, and interacts with Google Generative AI.")
 
-webrtc_streamer(key="0", video_transformer_factory=VideoTransformer)
+webrtc_streamer(key="unique_key", video_transformer_factory=VideoTransformer)
 
 st.write("Note: Ensure you allow the browser to access your webcam.")
