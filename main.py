@@ -1,85 +1,94 @@
 import cv2
-from cvzone.HandTrackingModule import HandDetector
 import numpy as np
-import google.generativeai as genai
-from PIL import Image
+import mediapipe as mp
+from streamlit_webrtc import VideoTransformerBase, webrtc_streamer
 import streamlit as st
-import time
+from PIL import Image
+import google.generativeai as genai
 
-st.set_page_config(layout="wide")
-#st.image('MathGestures.png')
-
-col1, col2 = st.columns([3, 2])
-with col1:
-    run = st.checkbox('Run', value=True)
-    FRAME_WINDOW = st.image([])
-
-with col2:
-    st.title("Answer")
-    output_text_area = st.subheader("")
-
-genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+# Configuration for Google Generative AI
+genai.configure(api_key="AIzaSyDiyJCpfu8wzNXcVbHhPAqlBZ0hgFpsCKY")
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-cap = cv2.VideoCapture(0)
-detector = HandDetector(detectionCon=0.8, maxHands=1)
+# Hand Detection class using MediaPipe
+class HandDetector:
+    def __init__(self, detection_confidence=0.5, tracking_confidence=0.5):
+        self.hands = mp.solutions.hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            min_detection_confidence=detection_confidence,
+            min_tracking_confidence=tracking_confidence
+        )
 
-def getHandInfo(img):
-    hands, img = detector.findHands(img, flipType=True)
-    if hands:
-        hand1 = hands[0]
-        lmList1 = hand1["lmList"]
-        fingers1 = detector.fingersUp(hand1)
-        return fingers1, lmList1
-    return None
+    def find_hands(self, img):
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(img_rgb)
+        return results
 
-def draw(info, prev_pos, canvas):
-    fingers, lmList = info
-    current_pos = None
-    if fingers == [0, 1, 0, 0, 0]:
-        current_pos = lmList[8][0:2]
-        if prev_pos is None:
-            prev_pos = current_pos
-        cv2.line(canvas, current_pos, prev_pos, (255, 0, 255), 10)
-    elif fingers == [1, 0, 0, 0, 0]:
-        canvas = np.zeros_like(img)
-    return current_pos, canvas
+    def draw_hands(self, img, results):
+        mp_drawing = mp.solutions.drawing_utils
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(img, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+        return img
 
-def sendToAI(model, canvas, fingers):
-    if fingers == [1, 1, 1, 1, 0]:
-        pil_image = Image.fromarray(canvas)
-        response = model.generate_content(["Solve this math problem", pil_image])
-        return response.text
-    return ""
+    def fingers_up(self, results):
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                fingers = []
+                for id in [4, 8, 12, 16, 20]:
+                    if id == 4:
+                        if hand_landmarks.landmark[id].x > hand_landmarks.landmark[id - 1].x:
+                            fingers.append(1)
+                        else:
+                            fingers.append(0)
+                    else:
+                        if hand_landmarks.landmark[id].y < hand_landmarks.landmark[id - 2].y:
+                            fingers.append(1)
+                        else:
+                            fingers.append(0)
+                return fingers
+        return []
 
-prev_pos = None
-canvas = None
-image_combined = None
-output_text = ""
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.detector = HandDetector()
+        self.canvas = None
 
-while run:
-    success, img = cap.read()
-    if not success or img is None:
-        st.write("Failed to capture image")
-        break
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        img = cv2.flip(img, 1)
+        
+        if self.canvas is None:
+            self.canvas = np.zeros_like(img)
 
-    img = cv2.flip(img, 1)
+        results = self.detector.find_hands(img)
+        img = self.detector.draw_hands(img, results)
+        fingers = self.detector.fingers_up(results)
 
-    if canvas is None:
-        canvas = np.zeros_like(img)
+        # Process the fingers to draw on the canvas
+        if fingers == [0, 1, 0, 0, 0]:
+            current_pos = (int(hand_landmarks.landmark[8].x * img.shape[1]), int(hand_landmarks.landmark[8].y * img.shape[0]))
+            if self.prev_pos is None:
+                self.prev_pos = current_pos
+            cv2.line(self.canvas, self.prev_pos, current_pos, (255, 0, 255), 10)
+            self.prev_pos = current_pos
+        elif fingers == [1, 0, 0, 0, 0]:
+            self.canvas = np.zeros_like(img)
 
-    info = getHandInfo(img)
-    if info:
-        prev_pos, canvas = draw(info, prev_pos, canvas)
-        output_text = sendToAI(model, canvas, info[0])
+        img = cv2.addWeighted(img, 0.7, self.canvas, 0.3, 0)
 
-    image_combined = cv2.addWeighted(img, 0.7, canvas, 0.3, 0)
-    FRAME_WINDOW.image(image_combined, channels="BGR")
+        # Generate AI response if needed
+        if fingers == [1, 1, 1, 1, 0]:
+            pil_image = Image.fromarray(self.canvas)
+            response = model.generate_content(["Solve this math problem", pil_image])
+            st.write(response.text)
 
-    if output_text:
-        output_text_area.text(output_text)
+        return img
 
-    time.sleep(0.03)
+st.title("Webcam Hand Tracking and AI Interaction")
+st.write("This application uses your webcam to detect and track hands in real-time using MediaPipe and OpenCV, and interacts with Google Generative AI.")
 
-cap.release()
-cv2.destroyAllWindows()
+webrtc_streamer(key="example", video_transformer_factory=VideoTransformer)
+
+st.write("Note: Ensure you allow the browser to access your webcam.")
