@@ -7,7 +7,7 @@ import streamlit as st
 import time
 
 st.set_page_config(layout="wide")
-st.image('MathGestures.png')
+#st.image('MathGestures.png')
 
 col1, col2 = st.columns([3, 2])
 with col1:
