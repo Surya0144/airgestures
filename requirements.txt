@@ -5,3 +5,5 @@ Pillow
 streamlit
 google-generativeai
 mediapipe
+streamlit-webrtc
+av
