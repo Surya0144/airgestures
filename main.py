@@ -4,9 +4,10 @@ import numpy as np
 import google.generativeai as genai
 from PIL import Image
 import streamlit as st
+import time
 
 st.set_page_config(layout="wide")
-#st.image('me.png')
+st.image('MathGestures.png')
 
 col1, col2 = st.columns([3, 2])
 with col1:
@@ -17,61 +18,51 @@ with col2:
     st.title("Answer")
     output_text_area = st.subheader("")
 
-genai.configure(api_key="AIzaSyDiyJCpfu8wzNXcVbHhPAqlBZ0hgFpsCKY")
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Initialize the webcam to capture video
-# The '2' indicates the third camera connected to your computer; '0' would usually refer to the built-in camera
 cap = cv2.VideoCapture(0)
 detector = HandDetector(detectionCon=0.8, maxHands=1)
+
 def getHandInfo(img):
-    hands, img = detector.findHands(img )  # with draw
-    #  hands = detector.findHands(img, draw=False)  # without draw
-
+    hands, img = detector.findHands(img, flipType=True)
     if hands:
-        # Hand 1
         hand1 = hands[0]
-        lmList = hand1["lmList"]  # List of 21 Landmark points
-
-        handType = hand1["type"]  # Handtype Left or Right
-
-        fingers = detector.fingersUp(hand1)
-        print(fingers)
-        return fingers,lmList
-    else:
-        return None
-
-
+        lmList1 = hand1["lmList"]
+        fingers1 = detector.fingersUp(hand1)
+        return fingers1, lmList1
+    return None
 
 def draw(info, prev_pos, canvas):
     fingers, lmList = info
     current_pos = None
     if fingers == [0, 1, 0, 0, 0]:
         current_pos = lmList[8][0:2]
-        if prev_pos is None: prev_pos = current_pos
+        if prev_pos is None:
+            prev_pos = current_pos
         cv2.line(canvas, current_pos, prev_pos, (255, 0, 255), 10)
     elif fingers == [1, 0, 0, 0, 0]:
         canvas = np.zeros_like(img)
-
     return current_pos, canvas
-
 
 def sendToAI(model, canvas, fingers):
     if fingers == [1, 1, 1, 1, 0]:
         pil_image = Image.fromarray(canvas)
-        response = model.generate_content(["guess the shape", pil_image])
+        response = model.generate_content(["Solve this math problem", pil_image])
         return response.text
-
+    return ""
 
 prev_pos = None
 canvas = None
 image_combined = None
 output_text = ""
-# Continuously get frames from the webcam
-while True:
-    # Capture each frame from the webcam
-    # 'success' will be True if the frame is successfully captured, 'img' will contain the frame
+
+while run:
     success, img = cap.read()
+    if not success or img is None:
+        st.write("Failed to capture image")
+        break
+
     img = cv2.flip(img, 1)
 
     if canvas is None:
@@ -79,9 +70,8 @@ while True:
 
     info = getHandInfo(img)
     if info:
-        fingers, lmList = info
         prev_pos, canvas = draw(info, prev_pos, canvas)
-        output_text = sendToAI(model, canvas, fingers)
+        output_text = sendToAI(model, canvas, info[0])
 
     image_combined = cv2.addWeighted(img, 0.7, canvas, 0.3, 0)
     FRAME_WINDOW.image(image_combined, channels="BGR")
@@ -89,10 +79,7 @@ while True:
     if output_text:
         output_text_area.text(output_text)
 
-    # # Display the image in a window
-    #cv2.imshow("Image", img)
-    #cv2.imshow("Canvas", canvas)
-    #cv2.imshow("image_combined", image_combined)
+    time.sleep(0.03)
 
-    # Keep the window open and update it for each frame; wait for 1 millisecond between frames
-    cv2.waitKey(1)
+cap.release()
+cv2.destroyAllWindows()
